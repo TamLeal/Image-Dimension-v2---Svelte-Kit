@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { writable, derived, get } from 'svelte/store'; // Adicionei get aqui
+  import { writable, derived, get } from 'svelte/store';
   import FileUpload from '$lib/FileUpload.svelte';
   import { slide } from 'svelte/transition';
 
@@ -27,45 +27,29 @@
 
     for (let i = 0; i < Math.min($sampleFiles.length, $manufacturerFiles.length); i++) {
       if ($pendingPairs.has(i)) {
-        const formData = new FormData();
-        formData.append('sample_image', $sampleFiles[i]);
-        formData.append('manufacturer_image', $manufacturerFiles[i]);
+        const sampleImage = await loadImage($sampleFiles[i]);
+        const manufacturerImage = await loadImage($manufacturerFiles[i]);
 
-        try {
-          const response = await fetch('https://backend-flask-image.onrender.com/api/process_images', {
-            method: 'POST',
-            body: formData,
-            headers: {
-              'Accept': 'application/json'
-            }
-          });
-
-          if (!response.ok) {
-            throw new Error(`Error: ${response.statusText}`);
+        const result = await processImagePair(sampleImage, manufacturerImage);
+        
+        results.update(r => ({
+          ...r,
+          [i]: {
+            sampleImage: $sampleFiles[i],
+            manufacturerImage: $manufacturerFiles[i],
+            scale: result.scale_inches_per_pixel,
+            width: result.width,
+            height: result.height,
+            img_with_coin: result.img_with_coin,
+            img_matches: result.img_matches
           }
+        }));
 
-          const result = await response.json();
-          results.update(r => ({
-            ...r,
-            [i]: {
-              sampleImage: $sampleFiles[i],
-              manufacturerImage: $manufacturerFiles[i],
-              scale: result.scale_inches_per_pixel,
-              width: result.width,
-              height: result.height,
-              img_with_coin: result.img_with_coin,
-              img_matches: result.img_matches
-            }
-          }));
-
-          pendingPairs.update(pairs => {
-            const newPairs = new Set(pairs);
-            newPairs.delete(i);
-            return newPairs;
-          });
-        } catch (error) {
-          console.error(`Error processing pair ${i + 1}:`, error);
-        }
+        pendingPairs.update(pairs => {
+          const newPairs = new Set(pairs);
+          newPairs.delete(i);
+          return newPairs;
+        });
       }
     }
   }
@@ -116,6 +100,101 @@
     manufacturerFiles,
     $manufacturerFiles => $manufacturerFiles.map(file => URL.createObjectURL(file))
   );
+
+  async function loadImage(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = e.target.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function detectCoinAndScale(image, coin_diameter_inch = 0.955) {
+    const gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY);
+    const thresh = new cv.Mat();
+    cv.threshold(gray, thresh, 240, 255, cv.THRESH_BINARY_INV);
+    const contours = new cv.MatVector();
+    const hierarchy = new cv.Mat();
+    cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    let coin_contour;
+    if (contours.size() > 1) {
+      coin_contour = contours.get(1);
+      const circle = cv.minEnclosingCircle(coin_contour);
+      const radius = circle.radius;
+      const diameter_pixels = radius * 2;
+      const scale_inches_per_pixel = coin_diameter_inch / diameter_pixels;
+      const mask = new cv.Mat.zeros(image.rows, image.cols, cv.CV_8UC1);
+      cv.circle(mask, circle.center, radius, new cv.Scalar(255, 255, 255), -1);
+      const img_with_coin = image.clone();
+      cv.circle(img_with_coin, circle.center, radius, new cv.Scalar(0, 255, 0), 2);
+      return { scale_inches_per_pixel, mask, img_with_coin };
+    }
+    return { scale_inches_per_pixel: null, mask: null, img_with_coin: null };
+  }
+
+  async function processImagePair(sampleImage, manufacturerImage) {
+    const { scale_inches_per_pixel, mask, img_with_coin } = detectCoinAndScale(sampleImage);
+    if (!scale_inches_per_pixel) {
+      throw new Error('No coin detected');
+    }
+
+    const orb = new cv.ORB();
+    const kp1 = new cv.KeyPointVector();
+    const kp2 = new cv.KeyPointVector();
+    const des1 = new cv.Mat();
+    const des2 = new cv.Mat();
+
+    const sample_gray = cv.cvtColor(sampleImage, cv.COLOR_BGR2GRAY);
+    const manufacturer_gray = cv.cvtColor(manufacturerImage, cv.COLOR_BGR2GRAY);
+
+    orb.detectAndCompute(sample_gray, mask, kp1, des1);
+    orb.detectAndCompute(manufacturer_gray, new cv.Mat(), kp2, des2);
+
+    const bf = new cv.BFMatcher(cv.NORM_HAMMING, true);
+    const matches = new cv.DMatchVector();
+    bf.match(des1, des2, matches);
+
+    const good_matches = [];
+    for (let i = 0; i < matches.size(); i++) {
+      good_matches.push(matches.get(i));
+    }
+
+    const img_matches = new cv.Mat();
+    cv.drawMatches(sampleImage, kp1, manufacturerImage, kp2, good_matches, img_matches);
+
+    const dimensions = calculateRealDimensions(good_matches, kp1, kp2, scale_inches_per_pixel, manufacturerImage);
+
+    return {
+      scale_inches_per_pixel,
+      width: dimensions.width,
+      height: dimensions.height,
+      img_with_coin: cv.imencode('.jpg', img_with_coin).toString('base64'),
+      img_matches: cv.imencode('.jpg', img_matches).toString('base64')
+    };
+  }
+
+  function calculateRealDimensions(matches, kp1, kp2, scale_inches_per_pixel, manufacturerImage) {
+    if (matches.length > 0) {
+      const distances_sample = matches.map(m => cv.norm(kp1.get(m.queryIdx).pt));
+      const distances_manufacturer = matches.map(m => cv.norm(kp2.get(m.trainIdx).pt));
+      const min_distance = Math.min(...distances_sample) / Math.min(...distances_manufacturer);
+      const max_distance = Math.max(...distances_sample) / Math.max(...distances_manufacturer);
+      const scale = (min_distance + max_distance) / 2;
+      const manufacturer_height = manufacturerImage.rows;
+      const manufacturer_width = manufacturerImage.cols;
+      return {
+        width: manufacturer_width * scale_inches_per_pixel * scale,
+        height: manufacturer_height * scale_inches_per_pixel * scale
+      };
+    }
+    throw new Error('Não foi possível encontrar correspondências suficientes entre as imagens.');
+  }
 </script>
 
 <div class="container">
