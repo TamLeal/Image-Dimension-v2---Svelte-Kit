@@ -1,7 +1,6 @@
 <script>
-  import { onMount } from 'svelte';
   import { writable } from 'svelte/store';
-  import { slide } from 'svelte/transition';
+  import axios from 'axios';
   import FileUpload from '$lib/FileUpload.svelte';
 
   let sampleFiles = [];
@@ -10,33 +9,48 @@
   let pendingPairs = new Set();
   let showSidebar = true;
 
+  function handleSampleUpload(files) {
+    sampleFiles = Array.from(files);
+    pendingPairs.clear();
+  }
 
- function handleSampleUpload(files) {
-  sampleFiles = Array.from(files);
-  pendingPairs.clear();
-}
-
-function handleManufacturerUpload(files) {
-  manufacturerFiles = Array.from(files);
-  pendingPairs.clear();
-}
+  function handleManufacturerUpload(files) {
+    manufacturerFiles = Array.from(files);
+    pendingPairs.clear();
+  }
 
   async function processImages() {
-    // Simular processamento (substitua com a lógica real depois)
     for (let i = 0; i < Math.min(sampleFiles.length, manufacturerFiles.length); i++) {
       if (pendingPairs.has(i)) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        results.update(r => ({
-          ...r,
-          [i]: {
-            sampleImage: sampleFiles[i],
-            manufacturerImage: manufacturerFiles[i],
-            scale: (Math.random() * 0.01).toFixed(4),
-            width: (Math.random() * 30).toFixed(2),
-            height: (Math.random() * 20).toFixed(2)
-          }
-        }));
-        pendingPairs.delete(i);
+        const formData = new FormData();
+        formData.append('sample_image', sampleFiles[i]);
+        formData.append('manufacturer_image', manufacturerFiles[i]);
+
+        try {
+          const response = await axios.post('http://127.0.0.1:5000/api/process_images', formData, {
+            headers: {
+              'Content-Type': 'multipart/form-data'
+            }
+          });
+
+          const result = response.data;
+          results.update(r => ({
+            ...r,
+            [i]: {
+              sampleImage: sampleFiles[i],
+              manufacturerImage: manufacturerFiles[i],
+              scale: result.scale_inches_per_pixel,
+              width: result.width,
+              height: result.height,
+              img_with_coin: result.img_with_coin,
+              img_matches: result.img_matches
+            }
+          }));
+
+          pendingPairs.delete(i);
+        } catch (error) {
+          console.error(`Error processing pair ${i + 1}:`, error);
+        }
       }
     }
   }
@@ -50,23 +64,21 @@ function handleManufacturerUpload(files) {
     pendingPairs = pendingPairs;
   }
 
-$: bothUploadsCompleted = sampleFiles.length > 0 && manufacturerFiles.length > 0;
-$: selectAll = bothUploadsCompleted && pendingPairs.size === manufacturerFiles.length;
+  $: bothUploadsCompleted = sampleFiles.length > 0 && manufacturerFiles.length > 0;
+  $: selectAll = bothUploadsCompleted && pendingPairs.size === manufacturerFiles.length;
 
-function toggleAllPairs() {
-  if (!bothUploadsCompleted) return; // Não faz nada se ambos os uploads não estiverem completos
+  function toggleAllPairs() {
+    if (!bothUploadsCompleted) return;
 
-  if (pendingPairs.size === manufacturerFiles.length) {
-    // Se todos estão selecionados, desmarcar todos
-    pendingPairs.clear();
-  } else {
-    // Caso contrário, selecionar todos
-    for (let i = 0; i < manufacturerFiles.length; i++) {
-      pendingPairs.add(i);
+    if (pendingPairs.size === manufacturerFiles.length) {
+      pendingPairs.clear();
+    } else {
+      for (let i = 0; i < manufacturerFiles.length; i++) {
+        pendingPairs.add(i);
+      }
     }
+    pendingPairs = new Set(pendingPairs);
   }
-  pendingPairs = new Set(pendingPairs); // Força a atualização do conjunto
-}
 
   function toggleSidebar() {
     showSidebar = !showSidebar;
@@ -78,23 +90,23 @@ function toggleAllPairs() {
 <div class="container">
   <div class="sidebar-container" class:collapsed={!showSidebar}>
     {#if showSidebar}
-      <div class="sidebar" transition:slide={{duration: 300, axis: 'x'}}>
+      <div class="sidebar" transition:slide={{ duration: 300, axis: 'x' }}>
         <section class="upload-section">
           <h2>Image Upload</h2>
-          <FileUpload 
-            label="Upload Sample Images" 
-            multiple={true} 
-            accept="image/*" 
+          <FileUpload
+            label="Upload Sample Images"
+            multiple={true}
+            accept="image/*"
             onFileSelect={handleSampleUpload}
           />
-          <FileUpload 
-            label="Upload Manufacturer Images" 
-            multiple={true} 
-            accept="image/*" 
+          <FileUpload
+            label="Upload Manufacturer Images"
+            multiple={true}
+            accept="image/*"
             onFileSelect={handleManufacturerUpload}
           />
         </section>
-        
+
         <section class="select-pairs">
           <h2>Select Pairs to Process</h2>
           {#if bothUploadsCompleted}
@@ -116,7 +128,7 @@ function toggleAllPairs() {
             <p>Upload both sample and manufacturer images to select pairs.</p>
           {/if}
         </section>
-        
+
         <button class="fancy-button process-button" on:click={processImages}>Process Selected Pairs</button>
       </div>
     {/if}
@@ -124,14 +136,14 @@ function toggleAllPairs() {
       <span class="icon">{showSidebar ? '◀' : '▶'}</span>
     </button>
   </div>
-  
+
   <div class="main-content">
     {#each Object.entries($results) as [index, result]}
       <div class="processed-pair">
         <h3>Processed Pair {parseInt(index) + 1}</h3>
         <div class="image-container">
-          <img src={URL.createObjectURL(result.sampleImage)} alt="Sample Image with Coin Detected" />
-          <img src={URL.createObjectURL(result.manufacturerImage)} alt="Manufacturer Image with Matches" />
+          <img src={`data:image/jpeg;base64,${result.img_with_coin}`} alt="Sample Image with Coin Detected" />
+          <img src={`data:image/jpeg;base64,${result.img_matches}`} alt="Manufacturer Image with Matches" />
         </div>
         <div class="result-info">
           <p>Scale (inches/pixel): {result.scale}</p>
@@ -154,7 +166,7 @@ function toggleAllPairs() {
     position: relative;
     width: 300px;
     transition: width 0.3s ease;
-    margin-left: 0; /* Removida a margem à esquerda */
+    margin-left: 0;
   }
 
   .sidebar-container.collapsed {
@@ -174,7 +186,7 @@ function toggleAllPairs() {
     flex: 1;
     overflow-y: auto;
     padding: 1rem;
-    margin-left: 30px; /* Este margin-left pode ser ajustado ou removido se necessário */
+    margin-left: 30px;
   }
 
   .upload-section, .select-pairs {
