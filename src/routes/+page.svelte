@@ -1,6 +1,7 @@
 <script>
   import { writable } from 'svelte/store';
   import FileUpload from '$lib/FileUpload.svelte';
+  import { slide } from 'svelte/transition'; // Importar a transição slide
 
   let sampleFiles = [];
   let manufacturerFiles = [];
