@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { writable, derived } from 'svelte/store';
+  import { writable, derived, get } from 'svelte/store';
   import FileUpload from '$lib/FileUpload.svelte';
   import { slide } from 'svelte/transition';
 
