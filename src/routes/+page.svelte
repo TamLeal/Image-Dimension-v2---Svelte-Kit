@@ -163,8 +163,8 @@
       <div class="processed-pair">
         <h3>Processed Pair {parseInt(index) + 1}</h3>
         <div class="image-container">
-          <img src={`data:image/jpeg;base64,${result.img_with_coin}`} alt="Sample Image with Coin Detected" />
-          <img src={`data:image/jpeg;base64,${result.img_matches}`} alt="Manufacturer Image with Matches" />
+          <img src={`data:image/jpeg;base64,${result.img_with_coin}`} alt="Sample with Coin Detected" />
+          <img src={`data:image/jpeg;base64,${result.img_matches}`} alt="Manufacturer with Matches" />
         </div>
         <div class="result-info">
           <p>Scale (inches/pixel): {result.scale}</p>

@@ -28,15 +28,26 @@
     dragover = false;
     handleFileSelect(event);
   }
+
+  function handleKeyDown(event) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      fileInput.click();
+    }
+  }
 </script>
 
 <div 
   class="file-upload" 
   class:dragover 
   on:click={() => fileInput.click()}
+  on:keydown={handleKeyDown}
   on:dragover={handleDragOver}
   on:dragleave={handleDragLeave}
   on:drop={handleDrop}
+  role="button"
+  tabindex="0"
+  aria-label={label}
 >
   <input
     bind:this={fileInput}
@@ -45,11 +56,12 @@
     {accept}
     on:change={handleFileSelect}
     style="display: none;"
+    aria-hidden="true"
   />
-  <div class="upload-icon">📁</div>
+  <div class="upload-icon" aria-hidden="true">📁</div>
   <p class="label">{label}</p>
   {#if fileCount > 0}
-    <p class="file-count">{fileCount} file{fileCount > 1 ? 's' : ''}</p>
+    <p class="file-count" aria-live="polite">{fileCount} file{fileCount > 1 ? 's' : ''} selected</p>
   {/if}
 </div>
 
@@ -67,9 +79,10 @@
     margin: 0 auto;
   }
 
-  .file-upload:hover, .file-upload.dragover {
+  .file-upload:hover, .file-upload:focus, .file-upload.dragover {
     border-color: #4CAF50;
     background-color: rgba(76, 175, 80, 0.1);
+    outline: none;
   }
 
   .upload-icon {
