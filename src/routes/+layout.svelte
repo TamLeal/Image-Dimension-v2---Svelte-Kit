@@ -29,6 +29,7 @@
 
   main {
     flex-grow: 1;
-    padding: 2rem;
+    padding: 0; /* Remove padding from main to ensure no margins */
+    margin-top : 10px;
   }
 </style>

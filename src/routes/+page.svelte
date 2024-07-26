@@ -96,26 +96,26 @@ function toggleAllPairs() {
         </section>
         
         <section class="select-pairs">
-					<h2>Select Pairs to Process</h2>
-					{#if bothUploadsCompleted}
-						<label class="select-all-checkbox">
-							<input type="checkbox" bind:checked={selectAll} on:change={toggleAllPairs}>
-							<span class="checkmark"></span>
-							Select All Pairs
-						</label>
-						<div class="pair-list">
-							{#each manufacturerFiles as file, index}
-								<label class="pair-item">
-									<input type="checkbox" checked={pendingPairs.has(index)} on:change={() => togglePair(index)}>
-									<img src={thumbnailUrls[index]} alt="Thumbnail" class="thumbnail" />
-									Pair {index + 1}
-								</label>
-							{/each}
-						</div>
-					{:else}
-						<p>Upload both sample and manufacturer images to select pairs.</p>
-					{/if}
-				</section>
+          <h2>Select Pairs to Process</h2>
+          {#if bothUploadsCompleted}
+            <label class="select-all-checkbox">
+              <input type="checkbox" bind:checked={selectAll} on:change={toggleAllPairs}>
+              <span class="checkmark"></span>
+              Select All Pairs
+            </label>
+            <div class="pair-list">
+              {#each manufacturerFiles as file, index}
+                <label class="pair-item">
+                  <input type="checkbox" checked={pendingPairs.has(index)} on:change={() => togglePair(index)}>
+                  <img src={thumbnailUrls[index]} alt="Thumbnail" class="thumbnail" />
+                  Pair {index + 1}
+                </label>
+              {/each}
+            </div>
+          {:else}
+            <p>Upload both sample and manufacturer images to select pairs.</p>
+          {/if}
+        </section>
         
         <button class="fancy-button process-button" on:click={processImages}>Process Selected Pairs</button>
       </div>
@@ -154,6 +154,7 @@ function toggleAllPairs() {
     position: relative;
     width: 300px;
     transition: width 0.3s ease;
+    margin-left: 0; /* Removida a margem à esquerda */
   }
 
   .sidebar-container.collapsed {
@@ -173,7 +174,7 @@ function toggleAllPairs() {
     flex: 1;
     overflow-y: auto;
     padding: 1rem;
-    margin-left: 30px;
+    margin-left: 30px; /* Este margin-left pode ser ajustado ou removido se necessário */
   }
 
   .upload-section, .select-pairs {
@@ -345,27 +346,26 @@ function toggleAllPairs() {
     justify-content: space-between;
   }
 
-	.pair-list {
-  /* ... (estilos existentes) ... */
-  scrollbar-width: thin;
-  scrollbar-color: #444 #2c2c2c;
-}
+  .pair-list {
+    scrollbar-width: thin;
+    scrollbar-color: #444 #2c2c2c;
+  }
 
-.pair-list::-webkit-scrollbar {
-  width: 8px;
-}
+  .pair-list::-webkit-scrollbar {
+    width: 8px;
+  }
 
-.pair-list::-webkit-scrollbar-track {
-  background: #2c2c2c;
-}
+  .pair-list::-webkit-scrollbar-track {
+    background: #2c2c2c;
+  }
 
-.pair-list::-webkit-scrollbar-thumb {
-  background-color: #444;
-  border-radius: 4px;
-  border: 2px solid #2c2c2c;
-}
+  .pair-list::-webkit-scrollbar-thumb {
+    background-color: #444;
+    border-radius: 4px;
+    border: 2px solid #2c2c2c;
+  }
 
-.pair-list::-webkit-scrollbar-thumb:hover {
-  background-color: #555;
-}
+  .pair-list::-webkit-scrollbar-thumb:hover {
+    background-color: #555;
+  }
 </style>
