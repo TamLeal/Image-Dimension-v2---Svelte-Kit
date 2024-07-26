@@ -1,6 +1,7 @@
 <script>
   import { writable } from 'svelte/store';
   import axios from 'axios';
+  import { slide } from 'svelte/transition';
   import FileUpload from '$lib/FileUpload.svelte';
 
   let sampleFiles = [];
@@ -12,11 +13,13 @@
   function handleSampleUpload(files) {
     sampleFiles = Array.from(files);
     pendingPairs.clear();
+    console.log('Sample files uploaded:', sampleFiles);
   }
 
   function handleManufacturerUpload(files) {
     manufacturerFiles = Array.from(files);
     pendingPairs.clear();
+    console.log('Manufacturer files uploaded:', manufacturerFiles);
   }
 
   async function processImages() {
@@ -27,6 +30,7 @@
         formData.append('manufacturer_image', manufacturerFiles[i]);
 
         try {
+          console.log(`Processing pair ${i + 1}...`);
           const response = await axios.post('http://127.0.0.1:5000/api/process_images', formData, {
             headers: {
               'Content-Type': 'multipart/form-data'
@@ -34,6 +38,8 @@
           });
 
           const result = response.data;
+          console.log(`Response for pair ${i + 1}:`, result);
+
           results.update(r => ({
             ...r,
             [i]: {
