@@ -10,6 +10,20 @@
   const pendingPairs = writable(new Set());
   const showSidebar = writable(true);
 
+  let cv; // Variável global para o OpenCV
+
+  onMount(() => {
+    // Carregar o OpenCV.js
+    const script = document.createElement('script');
+    script.src = 'https://docs.opencv.org/4.5.2/opencv.js';
+    script.async = true;
+    script.onload = () => {
+      cv = window.cv;
+      console.log('OpenCV.js carregado com sucesso');
+    };
+    document.body.appendChild(script);
+  });
+
   function handleSampleUpload(files) {
     sampleFiles.set(Array.from(files));
     pendingPairs.set(new Set());
@@ -21,29 +35,44 @@
   }
 
   async function processImages() {
+    if (!cv) {
+      console.error('OpenCV.js ainda não foi carregado');
+      return;
+    }
+
     const $sampleFiles = get(sampleFiles);
     const $manufacturerFiles = get(manufacturerFiles);
     const $pendingPairs = get(pendingPairs);
 
     for (let i = 0; i < Math.min($sampleFiles.length, $manufacturerFiles.length); i++) {
       if ($pendingPairs.has(i)) {
-        const sampleImage = await loadImage($sampleFiles[i]);
-        const manufacturerImage = await loadImage($manufacturerFiles[i]);
+        try {
+          const sampleImage = await loadImage($sampleFiles[i]);
+          const manufacturerImage = await loadImage($manufacturerFiles[i]);
 
-        const result = await processImagePair(sampleImage, manufacturerImage);
-        
-        results.update(r => ({
-          ...r,
-          [i]: {
-            sampleImage: $sampleFiles[i],
-            manufacturerImage: $manufacturerFiles[i],
-            scale: result.scale_inches_per_pixel,
-            width: result.width,
-            height: result.height,
-            img_with_coin: result.img_with_coin,
-            img_matches: result.img_matches
-          }
-        }));
+          const sampleMat = await convertToMat(sampleImage);
+          const manufacturerMat = await convertToMat(manufacturerImage);
+
+          const result = await processImagePair(sampleMat, manufacturerMat);
+          results.update(r => ({
+            ...r,
+            [i]: {
+              sampleImage: $sampleFiles[i],
+              manufacturerImage: $manufacturerFiles[i],
+              scale: result.scale_inches_per_pixel,
+              width: result.width,
+              height: result.height,
+              img_with_coin: result.img_with_coin,
+              img_matches: result.img_matches
+            }
+          }));
+
+          // Liberar memória
+          sampleMat.delete();
+          manufacturerMat.delete();
+        } catch (error) {
+          console.error(`Erro ao processar o par ${i + 1}:`, error);
+        }
 
         pendingPairs.update(pairs => {
           const newPairs = new Set(pairs);
@@ -52,6 +81,150 @@
         });
       }
     }
+  }
+
+  async function loadImage(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  async function convertToMat(img) {
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, img.width, img.height);
+    return cv.imread(canvas);
+  }
+
+  function preprocessImage(image, for_coin_detection = false) {
+    const gray = new cv.Mat();
+    cv.cvtColor(image, gray, cv.COLOR_RGBA2GRAY);
+    if (!for_coin_detection) {
+      const equ = new cv.Mat();
+      cv.equalizeHist(gray, equ);
+      const blurred = new cv.Mat();
+      cv.GaussianBlur(equ, blurred, new cv.Size(5, 5), 0);
+      const edges = new cv.Mat();
+      cv.Canny(blurred, edges, 50, 150);
+      equ.delete();
+      blurred.delete();
+      return edges;
+    }
+    return gray;
+  }
+
+  function detectCoinAndScale(image, coin_diameter_inch = 0.955) {
+    const gray = preprocessImage(image, true);
+    const thresh = new cv.Mat();
+    cv.threshold(gray, thresh, 240, 255, cv.THRESH_BINARY_INV);
+    const contours = new cv.MatVector();
+    const hierarchy = new cv.Mat();
+    cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    
+    let coin_contour;
+    let scale_inches_per_pixel = null;
+    let mask = null;
+    let img_with_coin = null;
+
+    if (contours.size() > 1) {
+      coin_contour = contours.get(1);
+      const circle = cv.minEnclosingCircle(coin_contour);
+      const radius = circle.radius;
+      const diameter_pixels = radius * 2;
+      scale_inches_per_pixel = coin_diameter_inch / diameter_pixels;
+      mask = new cv.Mat.zeros(image.rows, image.cols, cv.CV_8UC1);
+      cv.circle(mask, circle.center, radius, new cv.Scalar(255, 255, 255), -1);
+      img_with_coin = image.clone();
+      cv.circle(img_with_coin, circle.center, radius, new cv.Scalar(0, 255, 0), 2);
+    }
+
+    // Liberar memória
+    gray.delete();
+    thresh.delete();
+    contours.delete();
+    hierarchy.delete();
+
+    return { scale_inches_per_pixel, mask, img_with_coin };
+  }
+
+  async function processImagePair(sampleMat, manufacturerMat) {
+    const { scale_inches_per_pixel, mask, img_with_coin } = detectCoinAndScale(sampleMat);
+    if (!scale_inches_per_pixel) {
+      throw new Error('Nenhuma moeda detectada');
+    }
+
+    const akaze = new cv.AKAZE();
+    const kp1 = new cv.KeyPointVector();
+    const kp2 = new cv.KeyPointVector();
+    const des1 = new cv.Mat();
+    const des2 = new cv.Mat();
+
+    const sample_gray = new cv.Mat();
+    const manufacturer_gray = new cv.Mat();
+    cv.cvtColor(sampleMat, sample_gray, cv.COLOR_RGBA2GRAY);
+    cv.cvtColor(manufacturerMat, manufacturer_gray, cv.COLOR_RGBA2GRAY);
+
+    akaze.detectAndCompute(sample_gray, mask, kp1, des1);
+    akaze.detectAndCompute(manufacturer_gray, new cv.Mat(), kp2, des2);
+
+    const bf = new cv.BFMatcher(cv.NORM_HAMMING, true);
+    const matches = new cv.DMatchVector();
+    bf.match(des1, des2, matches);
+
+    console.log(`Total de correspondências encontradas: ${matches.size()}`);
+    if (matches.size() < 10) {
+      console.error(`Não há correspondências suficientes: ${matches.size()}`);
+      throw new Error('Não foi possível encontrar correspondências suficientes entre as imagens.');
+    }
+
+    const img_matches = new cv.Mat();
+    cv.drawMatches(sampleMat, kp1, manufacturerMat, kp2, matches, img_matches);
+
+    const dimensions = calculateRealDimensions(matches, kp1, kp2, scale_inches_per_pixel, manufacturerMat);
+
+    // Liberar memória
+    sample_gray.delete();
+    manufacturer_gray.delete();
+    des1.delete();
+    des2.delete();
+    kp1.delete();
+    kp2.delete();
+    matches.delete();
+
+    return {
+      scale_inches_per_pixel,
+      width: dimensions.width,
+      height: dimensions.height,
+      img_with_coin: cv.imencode('.jpg', img_with_coin).buffer,
+      img_matches: cv.imencode('.jpg', img_matches).buffer
+    };
+  }
+
+  function calculateRealDimensions(matches, kp1, kp2, scale_inches_per_pixel, manufacturerImage) {
+    if (matches.size() > 0) {
+      const distances_sample = [];
+      const distances_manufacturer = [];
+      for (let i = 0; i < matches.size(); i++) {
+        const m = matches.get(i);
+        distances_sample.push(cv.norm(kp1.get(m.queryIdx).pt));
+        distances_manufacturer.push(cv.norm(kp2.get(m.trainIdx).pt));
+      }
+      const min_distance = Math.min(...distances_sample) / Math.min(...distances_manufacturer);
+      const max_distance = Math.max(...distances_sample) / Math.max(...distances_manufacturer);
+      const scale = (min_distance + max_distance) / 2;
+      const manufacturer_height = manufacturerImage.rows;
+      const manufacturer_width = manufacturerImage.cols;
+      return {
+        width: manufacturer_width * scale_inches_per_pixel * scale,
+        height: manufacturer_height * scale_inches_per_pixel * scale
+      };
+    }
+    throw new Error('Não foi possível encontrar correspondências suficientes entre as imagens.');
   }
 
   function togglePair(index) {
@@ -100,102 +273,8 @@
     manufacturerFiles,
     $manufacturerFiles => $manufacturerFiles.map(file => URL.createObjectURL(file))
   );
-
-  async function loadImage(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = reject;
-        img.src = e.target.result;
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
-
-  function detectCoinAndScale(image, coin_diameter_inch = 0.955) {
-    const gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY);
-    const thresh = new cv.Mat();
-    cv.threshold(gray, thresh, 240, 255, cv.THRESH_BINARY_INV);
-    const contours = new cv.MatVector();
-    const hierarchy = new cv.Mat();
-    cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-    let coin_contour;
-    if (contours.size() > 1) {
-      coin_contour = contours.get(1);
-      const circle = cv.minEnclosingCircle(coin_contour);
-      const radius = circle.radius;
-      const diameter_pixels = radius * 2;
-      const scale_inches_per_pixel = coin_diameter_inch / diameter_pixels;
-      const mask = new cv.Mat.zeros(image.rows, image.cols, cv.CV_8UC1);
-      cv.circle(mask, circle.center, radius, new cv.Scalar(255, 255, 255), -1);
-      const img_with_coin = image.clone();
-      cv.circle(img_with_coin, circle.center, radius, new cv.Scalar(0, 255, 0), 2);
-      return { scale_inches_per_pixel, mask, img_with_coin };
-    }
-    return { scale_inches_per_pixel: null, mask: null, img_with_coin: null };
-  }
-
-  async function processImagePair(sampleImage, manufacturerImage) {
-    const { scale_inches_per_pixel, mask, img_with_coin } = detectCoinAndScale(sampleImage);
-    if (!scale_inches_per_pixel) {
-      throw new Error('No coin detected');
-    }
-
-    const orb = new cv.ORB();
-    const kp1 = new cv.KeyPointVector();
-    const kp2 = new cv.KeyPointVector();
-    const des1 = new cv.Mat();
-    const des2 = new cv.Mat();
-
-    const sample_gray = cv.cvtColor(sampleImage, cv.COLOR_BGR2GRAY);
-    const manufacturer_gray = cv.cvtColor(manufacturerImage, cv.COLOR_BGR2GRAY);
-
-    orb.detectAndCompute(sample_gray, mask, kp1, des1);
-    orb.detectAndCompute(manufacturer_gray, new cv.Mat(), kp2, des2);
-
-    const bf = new cv.BFMatcher(cv.NORM_HAMMING, true);
-    const matches = new cv.DMatchVector();
-    bf.match(des1, des2, matches);
-
-    const good_matches = [];
-    for (let i = 0; i < matches.size(); i++) {
-      good_matches.push(matches.get(i));
-    }
-
-    const img_matches = new cv.Mat();
-    cv.drawMatches(sampleImage, kp1, manufacturerImage, kp2, good_matches, img_matches);
-
-    const dimensions = calculateRealDimensions(good_matches, kp1, kp2, scale_inches_per_pixel, manufacturerImage);
-
-    return {
-      scale_inches_per_pixel,
-      width: dimensions.width,
-      height: dimensions.height,
-      img_with_coin: cv.imencode('.jpg', img_with_coin).toString('base64'),
-      img_matches: cv.imencode('.jpg', img_matches).toString('base64')
-    };
-  }
-
-  function calculateRealDimensions(matches, kp1, kp2, scale_inches_per_pixel, manufacturerImage) {
-    if (matches.length > 0) {
-      const distances_sample = matches.map(m => cv.norm(kp1.get(m.queryIdx).pt));
-      const distances_manufacturer = matches.map(m => cv.norm(kp2.get(m.trainIdx).pt));
-      const min_distance = Math.min(...distances_sample) / Math.min(...distances_manufacturer);
-      const max_distance = Math.max(...distances_sample) / Math.max(...distances_manufacturer);
-      const scale = (min_distance + max_distance) / 2;
-      const manufacturer_height = manufacturerImage.rows;
-      const manufacturer_width = manufacturerImage.cols;
-      return {
-        width: manufacturer_width * scale_inches_per_pixel * scale,
-        height: manufacturer_height * scale_inches_per_pixel * scale
-      };
-    }
-    throw new Error('Não foi possível encontrar correspondências suficientes entre as imagens.');
-  }
 </script>
+
 
 <div class="container">
   <div class="sidebar-container" class:collapsed={!$showSidebar}>
@@ -425,14 +504,6 @@
 
   .toggle-sidebar:hover {
     background-color: rgba(128, 128, 128, 0.2);
-  }
-
-  .toggle-sidebar .icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    height: 100%;
   }
 
   .processed-pair {
