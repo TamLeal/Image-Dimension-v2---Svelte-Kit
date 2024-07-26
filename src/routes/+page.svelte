@@ -11,16 +11,20 @@
   const showSidebar = writable(true);
 
   function handleSampleUpload(files) {
-    $sampleFiles = Array.from(files);
+    sampleFiles.set(Array.from(files));
     pendingPairs.set(new Set());
   }
 
   function handleManufacturerUpload(files) {
-    $manufacturerFiles = Array.from(files);
+    manufacturerFiles.set(Array.from(files));
     pendingPairs.set(new Set());
   }
 
   async function processImages() {
+    const $sampleFiles = get(sampleFiles);
+    const $manufacturerFiles = get(manufacturerFiles);
+    const $pendingPairs = get(pendingPairs);
+
     for (let i = 0; i < Math.min($sampleFiles.length, $manufacturerFiles.length); i++) {
       if ($pendingPairs.has(i)) {
         const formData = new FormData();
@@ -30,7 +34,10 @@
         try {
           const response = await fetch('https://backend-flask-image.onrender.com/api/process_images', {
             method: 'POST',
-            body: formData
+            body: formData,
+            headers: {
+              'Accept': 'application/json'
+            }
           });
 
           if (!response.ok) {
@@ -87,6 +94,9 @@
   );
 
   function toggleAllPairs() {
+    const $bothUploadsCompleted = get(bothUploadsCompleted);
+    const $manufacturerFiles = get(manufacturerFiles);
+
     if (!$bothUploadsCompleted) return;
 
     pendingPairs.update(pairs => {
