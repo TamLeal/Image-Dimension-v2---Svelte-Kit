@@ -1,30 +1,31 @@
 <script>
-  import { writable } from 'svelte/store';
+  import { onMount } from 'svelte';
+  import { writable, derived } from 'svelte/store';
   import FileUpload from '$lib/FileUpload.svelte';
-  import { slide } from 'svelte/transition'; // Importar a transição slide
+  import { slide } from 'svelte/transition';
 
-  let sampleFiles = [];
-  let manufacturerFiles = [];
+  const sampleFiles = writable([]);
+  const manufacturerFiles = writable([]);
   const results = writable({});
-  let pendingPairs = new Set();
-  let showSidebar = true;
+  const pendingPairs = writable(new Set());
+  const showSidebar = writable(true);
 
   function handleSampleUpload(files) {
-    sampleFiles = Array.from(files);
-    pendingPairs.clear();
+    $sampleFiles = Array.from(files);
+    pendingPairs.set(new Set());
   }
 
   function handleManufacturerUpload(files) {
-    manufacturerFiles = Array.from(files);
-    pendingPairs.clear();
+    $manufacturerFiles = Array.from(files);
+    pendingPairs.set(new Set());
   }
 
   async function processImages() {
-    for (let i = 0; i < Math.min(sampleFiles.length, manufacturerFiles.length); i++) {
-      if (pendingPairs.has(i)) {
+    for (let i = 0; i < Math.min($sampleFiles.length, $manufacturerFiles.length); i++) {
+      if ($pendingPairs.has(i)) {
         const formData = new FormData();
-        formData.append('sample_image', sampleFiles[i]);
-        formData.append('manufacturer_image', manufacturerFiles[i]);
+        formData.append('sample_image', $sampleFiles[i]);
+        formData.append('manufacturer_image', $manufacturerFiles[i]);
 
         try {
           const response = await fetch('http://127.0.0.1:5000/api/process_images', {
@@ -40,8 +41,8 @@
           results.update(r => ({
             ...r,
             [i]: {
-              sampleImage: sampleFiles[i],
-              manufacturerImage: manufacturerFiles[i],
+              sampleImage: $sampleFiles[i],
+              manufacturerImage: $manufacturerFiles[i],
               scale: result.scale_inches_per_pixel,
               width: result.width,
               height: result.height,
@@ -50,7 +51,11 @@
             }
           }));
 
-          pendingPairs.delete(i);
+          pendingPairs.update(pairs => {
+            const newPairs = new Set(pairs);
+            newPairs.delete(i);
+            return newPairs;
+          });
         } catch (error) {
           console.error(`Error processing pair ${i + 1}:`, error);
         }
@@ -59,40 +64,53 @@
   }
 
   function togglePair(index) {
-    if (pendingPairs.has(index)) {
-      pendingPairs.delete(index);
-    } else {
-      pendingPairs.add(index);
-    }
-    pendingPairs = pendingPairs;
+    pendingPairs.update(pairs => {
+      const newPairs = new Set(pairs);
+      if (newPairs.has(index)) {
+        newPairs.delete(index);
+      } else {
+        newPairs.add(index);
+      }
+      return newPairs;
+    });
   }
 
-  $: bothUploadsCompleted = sampleFiles.length > 0 && manufacturerFiles.length > 0;
-  $: selectAll = bothUploadsCompleted && pendingPairs.size === manufacturerFiles.length;
+  const bothUploadsCompleted = derived(
+    [sampleFiles, manufacturerFiles],
+    ([$sampleFiles, $manufacturerFiles]) => $sampleFiles.length > 0 && $manufacturerFiles.length > 0
+  );
+
+  const selectAll = derived(
+    [bothUploadsCompleted, pendingPairs, manufacturerFiles],
+    ([$bothUploadsCompleted, $pendingPairs, $manufacturerFiles]) => 
+      $bothUploadsCompleted && $pendingPairs.size === $manufacturerFiles.length
+  );
 
   function toggleAllPairs() {
-    if (!bothUploadsCompleted) return;
+    if (!$bothUploadsCompleted) return;
 
-    if (pendingPairs.size === manufacturerFiles.length) {
-      pendingPairs.clear();
-    } else {
-      for (let i = 0; i < manufacturerFiles.length; i++) {
-        pendingPairs.add(i);
+    pendingPairs.update(pairs => {
+      if (pairs.size === $manufacturerFiles.length) {
+        return new Set();
+      } else {
+        return new Set($manufacturerFiles.map((_, i) => i));
       }
-    }
-    pendingPairs = new Set(pendingPairs);
+    });
   }
 
   function toggleSidebar() {
-    showSidebar = !showSidebar;
+    showSidebar.update(value => !value);
   }
 
-  $: thumbnailUrls = manufacturerFiles.map(file => URL.createObjectURL(file));
+  const thumbnailUrls = derived(
+    manufacturerFiles,
+    $manufacturerFiles => $manufacturerFiles.map(file => URL.createObjectURL(file))
+  );
 </script>
 
 <div class="container">
-  <div class="sidebar-container" class:collapsed={!showSidebar}>
-    {#if showSidebar}
+  <div class="sidebar-container" class:collapsed={!$showSidebar}>
+    {#if $showSidebar}
       <div class="sidebar" transition:slide={{ duration: 300, axis: 'x' }}>
         <section class="upload-section">
           <h2>Image Upload</h2>
@@ -112,17 +130,17 @@
 
         <section class="select-pairs">
           <h2>Select Pairs to Process</h2>
-          {#if bothUploadsCompleted}
+          {#if $bothUploadsCompleted}
             <label class="select-all-checkbox">
-              <input type="checkbox" bind:checked={selectAll} on:change={toggleAllPairs}>
+              <input type="checkbox" bind:checked={$selectAll} on:change={toggleAllPairs}>
               <span class="checkmark"></span>
               Select All Pairs
             </label>
             <div class="pair-list">
-              {#each manufacturerFiles as file, index}
+              {#each $manufacturerFiles as file, index}
                 <label class="pair-item">
-                  <input type="checkbox" checked={pendingPairs.has(index)} on:change={() => togglePair(index)}>
-                  <img src={thumbnailUrls[index]} alt="Thumbnail" class="thumbnail" />
+                  <input type="checkbox" checked={$pendingPairs.has(index)} on:change={() => togglePair(index)}>
+                  <img src={$thumbnailUrls[index]} alt="Thumbnail" class="thumbnail" />
                   Pair {index + 1}
                 </label>
               {/each}
@@ -136,7 +154,7 @@
       </div>
     {/if}
     <button class="toggle-sidebar" on:click={toggleSidebar}>
-      <span class="icon">{showSidebar ? '◀' : '▶'}</span>
+      <span class="icon">{$showSidebar ? '◀' : '▶'}</span>
     </button>
   </div>
 
@@ -277,28 +295,14 @@
     background-color: #ccc;
   }
 
- .select-all-checkbox input:checked ~ .checkmark {
-  background-color: #4CAF50;
-}
-
-.select-all-checkbox .checkmark:after {
-  content: "";
-  position: absolute;
-  display: none;
-  left: 7px;
-  top: 3px;
-  width: 5px;
-  height: 10px;
-  border: solid white;
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
-}
-
-.select-all-checkbox input:checked ~ .checkmark:after {
-  display: block;
-}
+  .select-all-checkbox input:checked ~ .checkmark {
+    background-color: #4CAF50;
+  }
 
   .select-all-checkbox .checkmark:after {
+    content: "";
+    position: absolute;
+    display: none;
     left: 7px;
     top: 3px;
     width: 5px;
@@ -306,6 +310,10 @@
     border: solid white;
     border-width: 0 2px 2px 0;
     transform: rotate(45deg);
+  }
+
+  .select-all-checkbox input:checked ~ .checkmark:after {
+    display: block;
   }
 
   .toggle-sidebar {
