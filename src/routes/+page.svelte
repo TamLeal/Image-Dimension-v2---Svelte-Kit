@@ -20,52 +20,52 @@
   }
 
   async function processImages() {
-    const $sampleFiles = get(sampleFiles);
-    const $manufacturerFiles = get(manufacturerFiles);
-    const $pendingPairs = get(pendingPairs);
+  const $sampleFiles = get(sampleFiles);
+  const $manufacturerFiles = get(manufacturerFiles);
+  const $pendingPairs = get(pendingPairs);
 
-    for (let i = 0; i < Math.min($sampleFiles.length, $manufacturerFiles.length); i++) {
-      if ($pendingPairs.has(i)) {
-        try {
-          const formData = new FormData();
-          formData.append('sample_image', $sampleFiles[i]);
-          formData.append('manufacturer_image', $manufacturerFiles[i]);
+  for (let i = 0; i < Math.min($sampleFiles.length, $manufacturerFiles.length); i++) {
+    if ($pendingPairs.has(i)) {
+      try {
+        const formData = new FormData();
+        formData.append('sample_image', $sampleFiles[i]);
+        formData.append('manufacturer_image', $manufacturerFiles[i]);
 
-          const response = await fetch('https://backend-flask-image.vercel.app/api/process_images', {
-            method: 'POST',
-            body: formData,
-          });
+        const response = await fetch('https://backend-flask-image.vercel.app/api/process_images', {
+          method: 'POST',
+          body: formData,
+        });
 
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-
-          const result = await response.json();
-
-          results.update(r => ({
-            ...r,
-            [i]: {
-              sampleImage: $sampleFiles[i],
-              manufacturerImage: $manufacturerFiles[i],
-              scale: result.scale_inches_per_pixel,
-              width: result.width,
-              height: result.height,
-              img_with_coin: result.img_with_coin,
-              img_matches: result.img_matches
-            }
-          }));
-        } catch (error) {
-          console.error(`Erro ao processar o par ${i + 1}:`, error);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
 
-        pendingPairs.update(pairs => {
-          const newPairs = new Set(pairs);
-          newPairs.delete(i);
-          return newPairs;
-        });
+        const result = await response.json();
+
+        results.update(r => ({
+          ...r,
+          [i]: {
+            sampleImage: $sampleFiles[i],
+            manufacturerImage: $manufacturerFiles[i],
+            scale: result.scale_inches_per_pixel,
+            width: result.width,
+            height: result.height,
+            img_with_coin: result.img_with_coin,
+            img_matches: result.img_matches
+          }
+        }));
+      } catch (error) {
+        console.error(`Erro ao processar o par ${i + 1}:`, error);
       }
+
+      pendingPairs.update(pairs => {
+        const newPairs = new Set(pairs);
+        newPairs.delete(i);
+        return newPairs;
+      });
     }
   }
+}
 
   function togglePair(index) {
     pendingPairs.update(pairs => {
